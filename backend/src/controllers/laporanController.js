@@ -27,7 +27,7 @@ exports.generateLaporanBulanan = async (req, res) => {
 
         const muridData = murid[0];
 
-        // Get data absensi
+        // Get data absensi bulan ini
         const [absensi] = await db.query(`
             SELECT * FROM absensi
             WHERE murid_id = ?
@@ -35,7 +35,7 @@ exports.generateLaporanBulanan = async (req, res) => {
             ORDER BY tanggal ASC
         `, [murid_id, bulan, tahun]);
 
-        // Get data perilaku
+        // Get data perilaku bulan ini
         const [perilaku] = await db.query(`
             SELECT p.*, u.nama_lengkap as guru_nama
             FROM perilaku p
@@ -45,7 +45,7 @@ exports.generateLaporanBulanan = async (req, res) => {
             ORDER BY p.tanggal ASC
         `, [murid_id, bulan, tahun]);
 
-        // Get data misi
+        // Get data misi bulan ini
         const [misi] = await db.query(`
             SELECT pm.*, m.judul, m.poin_reward
             FROM pengerjaan_misi pm
@@ -56,7 +56,7 @@ exports.generateLaporanBulanan = async (req, res) => {
             ORDER BY pm.tanggal_pengerjaan ASC
         `, [murid_id, bulan, tahun]);
 
-        // Setelah ambil data misi, tambahkan:
+        // Ambil catatan wali kelas
         const periodeStr = `${tahun}-${String(bulan).padStart(2, '0')}`;
 
         const [catatanWaliKelas] = await db.query(`
@@ -68,9 +68,19 @@ exports.generateLaporanBulanan = async (req, res) => {
             WHERE cwk.murid_id = ? 
                 AND cwk.periode = ? 
                 AND cwk.jenis = 'bulanan'
-        `,  [murid_id, periodeStr]);
+        `, [murid_id, periodeStr]);
 
-        // Hitung statistik
+        // Hitung poin transaksi bulanan
+        const poinAbsensi = absensi.reduce((sum, a) => sum + (Number(a.poin_didapat) || 0), 0);
+        const poinPerilaku = perilaku.reduce((sum, p) => sum + (Number(p.poin) || 0), 0);
+        const poinMisi = misi.reduce((sum, m) => sum + (Number(m.poin_reward) || 0), 0);
+        const totalPoinBulanan = 100 + poinAbsensi + poinPerilaku + poinMisi;
+
+        // Ambil total_poin resmi dari tabel murid (atau fallback ke hitungan bulanan)
+        const totalPoin = (muridData.total_poin !== undefined && muridData.total_poin !== null)
+            ? Number(muridData.total_poin)
+            : totalPoinBulanan;
+
         const statistik = {
             total_hadir: absensi.filter(a => a.status === 'hadir').length,
             total_terlambat: absensi.filter(a => a.status === 'terlambat').length,
@@ -80,13 +90,10 @@ exports.generateLaporanBulanan = async (req, res) => {
             total_perilaku_positif: perilaku.filter(p => p.jenis === 'positif').length,
             total_perilaku_negatif: perilaku.filter(p => p.jenis === 'negatif').length,
             total_misi: misi.length,
-            total_poin: 100 +
-                       absensi.reduce((sum, a) => sum + a.poin_didapat, 0) +
-                       perilaku.reduce((sum, p) => sum + p.poin, 0) +
-                       misi.reduce((sum, m) => sum + m.poin_reward, 0)
+            total_poin: totalPoin
         };
-        
-        // Simpan ke database laporan
+
+        // Simpan / update database laporan
         const [existing] = await db.query(
             'SELECT id FROM laporan WHERE murid_id = ? AND jenis = ? AND periode = ?',
             [murid_id, 'bulanan', `${tahun}-${bulan}`]
@@ -108,6 +115,23 @@ exports.generateLaporanBulanan = async (req, res) => {
                 statistik.total_perilaku_positif,
                 statistik.total_perilaku_negatif,
                 statistik.total_misi
+            ]);
+        } else {
+            await db.query(`
+                UPDATE laporan 
+                SET total_poin = ?, total_hadir = ?, total_terlambat = ?, total_izin = ?, total_sakit = ?, total_alpa = ?, perilaku_positif = ?, perilaku_negatif = ?, misi_selesai = ?
+                WHERE id = ?
+            `, [
+                statistik.total_poin,
+                statistik.total_hadir,
+                statistik.total_terlambat,
+                statistik.total_izin,
+                statistik.total_sakit,
+                statistik.total_alpa,
+                statistik.total_perilaku_positif,
+                statistik.total_perilaku_negatif,
+                statistik.total_misi,
+                existing[0].id
             ]);
         }
 

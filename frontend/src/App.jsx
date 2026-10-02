@@ -313,7 +313,7 @@ function AppRoutes() {
                 </ProtectedRoute>
             } />
             <Route path="/rekap-absensi" element={
-                <ProtectedRoute allowedRoles={['admin', 'kepsek', 'guru', 'guru_bk']}>
+                <ProtectedRoute allowedRoles={['admin', 'kepsek', 'guru', 'guru_bk', 'orangtua']}>
                     <RekapAbsensi />
                 </ProtectedRoute>
             } />
@@ -369,7 +369,7 @@ function AppRoutes() {
                     <PengaturanAbsensi />
                 </ProtectedRoute>
             } />
-
+            
             {/* DEFAULT */}
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="*" element={<Navigate to="/login" replace />} />

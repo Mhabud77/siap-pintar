@@ -15,7 +15,6 @@ async function getKategoriPerilaku() {
     const result = {};
 
     rows.forEach(r => {
-        // Mapping nama_konfigurasi → key
         const key = r.nama_konfigurasi.replace('poin_', '');
         const jenis = r.kategori === 'perilaku_positif' ? 'positif' : 'negatif';
         
@@ -30,41 +29,57 @@ async function getKategoriPerilaku() {
 }
 
 // ============================================
-// CATAT PERILAKU
+// CATAT PERILAKU (MENDUKUNG BANYAK MURID & BANYAK KATEGORI)
 // ============================================
 exports.catatPerilaku = async (req, res) => {
     try {
-        const { murid_id, kategori, deskripsi, tanggal, waktu } = req.body;
+        const { murid_id, murid_ids, kategori, kategoris, deskripsi, tanggal, waktu } = req.body;
         const guru_id = req.user.id;
 
-        // Validasi input
-        if (!murid_id || !kategori) {
+        // Normalisasi ke Array
+        const listMuridIds = Array.isArray(murid_ids) 
+            ? murid_ids 
+            : (murid_id ? [murid_id] : []);
+        
+        const listKategoris = Array.isArray(kategoris) 
+            ? kategoris 
+            : (kategori ? [kategori] : []);
+
+        // Validasi Input
+        if (listMuridIds.length === 0) {
             return res.status(400).json({
                 success: false,
-                message: 'Murid dan kategori harus diisi'
+                message: 'Pilih minimal 1 murid'
             });
         }
 
-        // Cek kategori valid
-        const KATEGORI = await getKategoriPerilaku();
-        const kategoriData = KATEGORI[kategori];
-        if (!kategoriData) {
+        if (listKategoris.length === 0) {
             return res.status(400).json({
                 success: false,
-                message: 'Kategori perilaku tidak valid'
+                message: 'Pilih minimal 1 kategori perilaku'
             });
         }
 
-        // ============================================
-        // VALIDASI & FALLBACK TANGGAL & WAKTU
-        // ============================================
+        // Cek Validasi Kategori
+        const KATEGORI_ALL = await getKategoriPerilaku();
+        const validKategoriData = [];
+        for (const katKey of listKategoris) {
+            if (!KATEGORI_ALL[katKey]) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Kategori perilaku '${katKey}' tidak valid`
+                });
+            }
+            validKategoriData.push({ key: katKey, ...KATEGORI_ALL[katKey] });
+        }
+
+        // Validasi & Fallback Tanggal
         const now = new Date();
         const serverDate = now.toISOString().split('T')[0];
         const serverTime = now.toTimeString().slice(0, 8);
 
         let tanggalFinal = tanggal || serverDate;
 
-        // Validasi format tanggal
         const tanggalRegex = /^\d{4}-\d{2}-\d{2}$/;
         if (tanggal && !tanggalRegex.test(tanggal)) {
             return res.status(400).json({
@@ -73,7 +88,6 @@ exports.catatPerilaku = async (req, res) => {
             });
         }
 
-        // Validasi tanggal tidak masa depan
         const tanggalObj = new Date(tanggalFinal);
         const hariIni = new Date(serverDate);
         if (tanggalObj > hariIni) {
@@ -83,7 +97,6 @@ exports.catatPerilaku = async (req, res) => {
             });
         }
 
-        // Validasi tanggal tidak lebih dari 7 hari ke belakang
         const tujuhHariLalu = new Date();
         tujuhHariLalu.setDate(tujuhHariLalu.getDate() - 7);
         if (tanggalObj < tujuhHariLalu) {
@@ -94,8 +107,6 @@ exports.catatPerilaku = async (req, res) => {
         }
 
         let waktuFinal = waktu || serverTime;
-
-        // Validasi format waktu
         const waktuRegex = /^\d{2}:\d{2}(:\d{2})?$/;
         if (waktu && !waktuRegex.test(waktu)) {
             return res.status(400).json({
@@ -104,114 +115,124 @@ exports.catatPerilaku = async (req, res) => {
             });
         }
 
-        // Normalisasi waktu ke HH:MM:SS
         if (waktuFinal.length === 5) {
             waktuFinal = waktuFinal + ':00';
         }
 
-        // ============================================
-        // CEK MURID
-        // ============================================
-        const [murid] = await db.query(`
+        // Ambil Data Murid
+        const [muridList] = await db.query(`
             SELECT m.*, u.nama_lengkap, u.id as user_id, k.nama_kelas
             FROM murid m
             JOIN users u ON m.user_id = u.id
             JOIN kelas k ON m.kelas_id = k.id
-            WHERE m.id = ?
-        `, [murid_id]);
+            WHERE m.id IN (?)
+        `, [listMuridIds]);
 
-        if (murid.length === 0) {
+        if (muridList.length === 0) {
             return res.status(404).json({
                 success: false,
                 message: 'Murid tidak ditemukan'
             });
         }
 
-        const muridData = murid[0];
+        let totalTercatat = 0;
+        const hasilMurid = [];
 
-        // ============================================
-        // INSERT PERILAKU
-        // ============================================
-        const [result] = await db.query(`
-            INSERT INTO perilaku 
-            (murid_id, guru_id, jenis, kategori, deskripsi, poin, tanggal, waktu)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-            murid_id,
-            guru_id,
-            kategoriData.jenis,
-            kategori,
-            deskripsi || kategoriData.label,
-            kategoriData.poin,
-            tanggalFinal,
-            waktuFinal
-        ]);
+        // Loop Setiap Murid & Setiap Kategori
+        for (const muridData of muridList) {
+            let totalPoinPerubahanMurid = 0;
 
-        // Update poin murid
-        await db.query(`
-            UPDATE murid 
-            SET poin_bulan_ini = poin_bulan_ini + ?,
-                poin_tahun_ini = poin_tahun_ini + ?
-            WHERE id = ?
-        `, [kategoriData.poin, kategoriData.poin, murid_id]);
+            for (const katData of validKategoriData) {
+                const [result] = await db.query(`
+                    INSERT INTO perilaku 
+                    (murid_id, guru_id, jenis, kategori, deskripsi, poin, tanggal, waktu)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                `, [
+                    muridData.id,
+                    guru_id,
+                    katData.jenis,
+                    katData.key,
+                    deskripsi || katData.label,
+                    katData.poin,
+                    tanggalFinal,
+                    waktuFinal
+                ]);
 
-        // Log poin
-        const [currentPoin] = await db.query(
-            'SELECT poin_bulan_ini FROM murid WHERE id = ?',
-            [murid_id]
-        );
+                // Update poin murid
+                await db.query(`
+                    UPDATE murid 
+                    SET poin_bulan_ini = poin_bulan_ini + ?,
+                        poin_tahun_ini = poin_tahun_ini + ?
+                    WHERE id = ?
+                `, [katData.poin, katData.poin, muridData.id]);
 
-        await db.query(`
-            INSERT INTO log_poin 
-            (murid_id, sumber, referensi_id, poin_perubahan, poin_sebelum, poin_sesudah, keterangan)
-            VALUES (?, 'perilaku', ?, ?, ?, ?, ?)
-        `, [
-            murid_id,
-            result.insertId,
-            kategoriData.poin,
-            currentPoin[0].poin_bulan_ini - kategoriData.poin,
-            currentPoin[0].poin_bulan_ini,
-            `${kategoriData.label}: ${deskripsi || ''}`
-        ]);
+                totalPoinPerubahanMurid += katData.poin;
 
-        // Kirim notifikasi WA (opsional)
-        if (muridData.orangtua_id) {
-            try {
-                const [orangtua] = await db.query(
-                    'SELECT no_telepon FROM users WHERE id = ?',
-                    [muridData.orangtua_id]
+                // Log poin
+                const [currentPoin] = await db.query(
+                    'SELECT poin_bulan_ini FROM murid WHERE id = ?',
+                    [muridData.id]
                 );
 
-                if (orangtua.length > 0 && orangtua[0].no_telepon) {
-                    const emoji = kategoriData.jenis === 'positif' ? '🌟' : '⚠️';
-                    const pesan = `${emoji} *NOTIFIKASI PERILAKU*\n\n` +
-                        `Ananda *${muridData.nama_lengkap}* (${muridData.nama_kelas})\n\n` +
-                        `Jenis: ${kategoriData.jenis === 'positif' ? 'POSITIF' : 'NEGATIF'}\n` +
-                        `Kategori: ${kategoriData.label}\n` +
-                        `Deskripsi: ${deskripsi || '-'}\n` +
-                        `Poin: ${kategoriData.poin > 0 ? '+' : ''}${kategoriData.poin}\n` +
-                        `Tanggal: ${tanggalFinal} ${waktuFinal.slice(0, 5)}\n\n` +
-                        `_SIAP PINTAR_`;
+                const poinBulanIni = currentPoin[0]?.poin_bulan_ini || 0;
 
-                    await kirimNotifikasiWA(orangtua[0].no_telepon, pesan);
-                }
-            } catch (waError) {
-                console.error('WA error:', waError.message);
+                await db.query(`
+                    INSERT INTO log_poin 
+                    (murid_id, sumber, referensi_id, poin_perubahan, poin_sebelum, poin_sesudah, keterangan)
+                    VALUES (?, 'perilaku', ?, ?, ?, ?, ?)
+                `, [
+                    muridData.id,
+                    result.insertId,
+                    katData.poin,
+                    poinBulanIni - katData.poin,
+                    poinBulanIni,
+                    `${katData.label}: ${deskripsi || ''}`
+                ]);
+
+                totalTercatat++;
             }
+
+            // Notifikasi WA Ke Orang Tua
+            if (muridData.orangtua_id) {
+                try {
+                    const [orangtua] = await db.query(
+                        'SELECT no_telepon FROM users WHERE id = ?',
+                        [muridData.orangtua_id]
+                    );
+
+                    if (orangtua.length > 0 && orangtua[0].no_telepon) {
+                        const labelsKat = validKategoriData.map(k => k.label).join(', ');
+                        const emoji = totalPoinPerubahanMurid >= 0 ? '🌟' : '⚠️';
+                        const pesan = `${emoji} *NOTIFIKASI PERILAKU*\n\n` +
+                            `Ananda *${muridData.nama_lengkap}* (${muridData.nama_kelas})\n\n` +
+                            `Kategori (${validKategoriData.length}): ${labelsKat}\n` +
+                            `Deskripsi: ${deskripsi || '-'}\n` +
+                            `Total Poin: ${totalPoinPerubahanMurid > 0 ? '+' : ''}${totalPoinPerubahanMurid}\n` +
+                            `Tanggal: ${tanggalFinal} ${waktuFinal.slice(0, 5)}\n\n` +
+                            `_SIAP PINTAR_`;
+
+                        await kirimNotifikasiWA(orangtua[0].no_telepon, pesan);
+                    }
+                } catch (waError) {
+                    console.error('WA error:', waError.message);
+                }
+            }
+
+            hasilMurid.push({
+                murid: muridData.nama_lengkap,
+                kelas: muridData.nama_kelas,
+                totalPoin: totalPoinPerubahanMurid
+            });
         }
 
         res.status(201).json({
             success: true,
-            message: 'Perilaku berhasil dicatat',
+            message: `Berhasil mencatat ${validKategoriData.length} kategori perilaku untuk ${muridList.length} murid (${totalTercatat} entri disimpan).`,
             data: {
-                id: result.insertId,
-                murid: muridData.nama_lengkap,
-                kelas: muridData.nama_kelas,
-                jenis: kategoriData.jenis,
-                kategori: kategoriData.label,
-                poin: kategoriData.poin,
-                tanggal: tanggalFinal,
-                waktu: waktuFinal
+                totalMurid: muridList.length,
+                totalKategori: validKategoriData.length,
+                totalTercatat,
+                murid: hasilMurid
             }
         });
 
@@ -290,6 +311,6 @@ exports.getKategoriPerilaku = async (req, res) => {
             }
         });
     } catch (error) {
-        // ...
+        res.status(500).json({ success: false, message: error.message });
     }
 };

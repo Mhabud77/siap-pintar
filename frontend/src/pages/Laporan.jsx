@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import api from '../services/api';
@@ -9,32 +9,97 @@ export default function Laporan() {
     const { user } = useAuth();
 
     const isOrangTua = user?.role === 'orangtua';
+    // Cek mode aktif user (Wali Kelas vs Guru Mapel / Admin)
+    const isWaliKelasMode = user?.activeMode === 'wali_kelas' || user?.role === 'wali_kelas';
     const muridIdFromUrl = searchParams.get('murid_id');
 
-    const [muridId, setMuridId] = useState(muridIdFromUrl || '');
     const [bulan, setBulan] = useState(new Date().getMonth() + 1);
     const [tahun, setTahun] = useState(new Date().getFullYear());
     const [laporan, setLaporan] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+
+    // State khusus Orang Tua
     const [anakList, setAnakList] = useState([]);
     const [selectedAnak, setSelectedAnak] = useState(null);
 
+    // State Filter Kelas & Autocomplete Murid
+    const [kelasList, setKelasList] = useState([]);
+    const [selectedKelas, setSelectedKelas] = useState('');
+    const [searchMurid, setSearchMurid] = useState('');
+    const [muridList, setMuridList] = useState([]);
+    const [selectedMurid, setSelectedMurid] = useState(null);
+    const [showMuridDropdown, setShowMuridDropdown] = useState(false);
+    const [loadingMurid, setLoadingMurid] = useState(false);
+    const dropdownRef = useRef(null);
+
     const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 
-    // Kalau orang tua, load daftar anak
+    // Load data awal berdasarkan Role & Mode
     useEffect(() => {
         if (isOrangTua) {
             loadAnakList();
+        } else {
+            loadKelasList();
         }
-    }, [isOrangTua]);
+    }, [isOrangTua, isWaliKelasMode, user]);
 
-    // Auto-load laporan kalau orang tua & anak sudah dipilih
+    // Load murid dari parameter URL jika ada
+    useEffect(() => {
+        if (!isOrangTua && muridIdFromUrl) {
+            api.get(`/murid/${muridIdFromUrl}`)
+                .then(res => {
+                    const murid = res.data.data;
+                    if (murid) {
+                        setSelectedMurid(murid);
+                        setSearchMurid(murid.nama_lengkap);
+                    }
+                })
+                .catch(err => console.error('Error load murid from URL:', err));
+        }
+    }, [isOrangTua, muridIdFromUrl]);
+
+    // Auto-load laporan untuk Orang Tua saat anak terpilih
     useEffect(() => {
         if (isOrangTua && selectedAnak) {
             loadLaporan(selectedAnak.murid_id);
         }
     }, [selectedAnak, bulan, tahun]);
+
+    // Search Murid dengan Filter Kelas & Debounce
+    useEffect(() => {
+        if (isOrangTua) return;
+
+        const timer = setTimeout(async () => {
+            setLoadingMurid(true);
+            try {
+                let url = `/murid?limit=100`;
+                // Jika mode Wali Kelas, paksa filter kelas ke kelas wali
+                const targetKelas = isWaliKelasMode ? (user?.kelas_id || selectedKelas) : selectedKelas;
+                if (targetKelas) url += `&kelas_id=${targetKelas}`;
+                if (searchMurid.trim().length >= 2) url += `&q=${encodeURIComponent(searchMurid)}`;
+
+                const res = await api.get(url);
+                setMuridList(res.data.data || []);
+            } catch (err) {
+                console.error('Error search murid:', err);
+            }
+            setLoadingMurid(false);
+        }, 300);
+
+        return () => clearTimeout(timer);
+    }, [selectedKelas, searchMurid, isOrangTua, isWaliKelasMode, user]);
+
+    // Close Dropdown saat klik di luar
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+                setShowMuridDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const loadAnakList = async () => {
         try {
@@ -46,10 +111,49 @@ export default function Laporan() {
         } catch (err) { console.error(err); }
     };
 
+    const loadKelasList = async () => {
+        try {
+            const currentMode = user?.activeMode || (isWaliKelasMode ? 'wali' : 'guru');
+            
+            // Coba ambil dari endpoint filter yang spesifik sesuai mode
+            const res = await api.get(`/kelas/filter?mode=${currentMode}`);
+            const dataKelas = res.data.data || [];
+            
+            setKelasList(dataKelas);
+
+            // Jika mode Wali Kelas dan hanya punya 1 kelas binaan, kunci otomatis
+            if (currentMode === 'wali' && dataKelas.length === 1) {
+                setSelectedKelas(dataKelas[0].id.toString());
+            }
+        } catch (err) { 
+            console.error('Gagal memuat kelas dari filter, mencoba endpoint umum:', err);
+            // Fallback cadangan jika endpoint /filter gagal: ambil dari endpoint /kelas biasa
+            try {
+                const resFallback = await api.get('/kelas');
+                const allKelas = resFallback.data.data || [];
+                if (isWaliKelasMode && user?.kelas_id) {
+                    const filtered = allKelas.filter(k => k.id === user.kelas_id);
+                    setKelasList(filtered.length > 0 ? filtered : allKelas);
+                    setSelectedKelas(user.kelas_id.toString());
+                } else {
+                    setKelasList(allKelas);
+                }
+            } catch (fallbackErr) {
+                console.error('Gagal total memuat kelas:', fallbackErr);
+            }
+        }
+    };
+
+    const handlePilihMurid = (m) => {
+        setSelectedMurid(m);
+        setSearchMurid(m.nama_lengkap);
+        setShowMuridDropdown(false);
+    };
+
     const loadLaporan = async (id) => {
-        const muridIdFinal = id || muridId;
+        const muridIdFinal = id || selectedMurid?.id;
         if (!muridIdFinal) {
-            setError('Pilih murid dulu');
+            setError('Pilih nama murid terlebih dahulu');
             return;
         }
         setLoading(true);
@@ -67,13 +171,16 @@ export default function Laporan() {
     const handleTampilkan = () => {
         if (isOrangTua && selectedAnak) {
             loadLaporan(selectedAnak.murid_id);
+        } else if (selectedMurid) {
+            loadLaporan(selectedMurid.id);
         } else {
-            loadLaporan(muridId);
+            setError('Pilih nama murid terlebih dahulu');
         }
     };
 
     const downloadPDF = () => {
-        const muridIdFinal = isOrangTua ? selectedAnak?.murid_id : muridId;
+        const muridIdFinal = isOrangTua ? selectedAnak?.murid_id : selectedMurid?.id;
+        if (!muridIdFinal) return;
         const token = localStorage.getItem('token');
         const url = `http://localhost:5000/api/laporan/download/${muridIdFinal}/${bulan}/${tahun}?token=${token}`;
         window.open(url, '_blank');
@@ -82,7 +189,7 @@ export default function Laporan() {
     return (
         <div className="min-h-screen bg-gray-100 p-6">
             <div className="max-w-4xl mx-auto">
-                <button onClick={() => navigate(isOrangTua ? '/orangtua' : -1)} className="text-primary hover:underline mb-4 text-sm">
+                <button onClick={() => navigate(isOrangTua ? '/orangtua' : -1)} className="text-primary hover:underline mb-4 text-sm flex items-center gap-1">
                     ← Kembali
                 </button>
 
@@ -97,7 +204,6 @@ export default function Laporan() {
                     </h2>
 
                     {isOrangTua ? (
-                        // ORANG TUA: Pilih anak dari dropdown
                         <div className="space-y-4">
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-2">
@@ -147,35 +253,104 @@ export default function Laporan() {
                             </button>
                         </div>
                     ) : (
-                        // ADMIN/GURU: Input ID murid manual
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-2">ID Murid</label>
-                                <input
-                                    type="number"
-                                    placeholder="Contoh: 1"
-                                    value={muridId}
-                                    onChange={(e) => setMuridId(e.target.value)}
-                                    className="input-field"
-                                />
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {/* FILTER KELAS */}
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">
+                                        Kelas
+                                    </label>
+                                    <select
+                                        value={selectedKelas}
+                                        disabled={isWaliKelasMode} // Dikunci jika mode Wali Kelas
+                                        onChange={(e) => {
+                                            setSelectedKelas(e.target.value);
+                                            setSelectedMurid(null);
+                                            setSearchMurid('');
+                                        }}
+                                        className="input-field bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                                    >
+                                        {!isWaliKelasMode && <option value="">Semua Kelas</option>}
+                                        {kelasList.map((k) => (
+                                            <option key={k.id} value={k.id}>{k.nama_kelas}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* AUTOKOMPLET NAMA MURID */}
+                                <div className="relative" ref={dropdownRef}>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">
+                                        Nama Murid / NIS
+                                    </label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ketik nama atau NIS murid..."
+                                        value={searchMurid}
+                                        onChange={(e) => {
+                                            setSearchMurid(e.target.value);
+                                            setSelectedMurid(null);
+                                            setShowMuridDropdown(true);
+                                        }}
+                                        onFocus={() => setShowMuridDropdown(true)}
+                                        className="input-field"
+                                        autoComplete="off"
+                                    />
+
+                                    {showMuridDropdown && (
+                                        <div className="absolute z-20 w-full bg-white border border-gray-300 rounded-xl mt-1 max-h-60 overflow-y-auto shadow-xl">
+                                            {loadingMurid ? (
+                                                <div className="p-3 text-center text-sm text-gray-500">
+                                                    ⏳ Mencari murid...
+                                                </div>
+                                            ) : muridList.length === 0 ? (
+                                                <div className="p-3 text-center text-sm text-gray-500">
+                                                    Tidak ada murid ditemukan
+                                                </div>
+                                            ) : (
+                                                muridList.map((m) => (
+                                                    <div
+                                                        key={m.id}
+                                                        onClick={() => handlePilihMurid(m)}
+                                                        className="p-3 hover:bg-blue-50 cursor-pointer border-b last:border-b-0 transition"
+                                                    >
+                                                        <p className="font-bold text-gray-800 text-sm">{m.nama_lengkap}</p>
+                                                        <p className="text-xs text-gray-500">{m.nama_kelas} • NIS: {m.nis || '-'}</p>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                            <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-2">Bulan</label>
-                                <select value={bulan} onChange={(e) => setBulan(parseInt(e.target.value))} className="input-field">
-                                    {BULAN.map((b, i) => (
-                                        <option key={i} value={i + 1}>{b}</option>
-                                    ))}
-                                </select>
+
+                            {selectedMurid && (
+                                <div className="p-3 bg-blue-50 border-l-4 border-primary rounded-lg text-sm text-blue-800 font-medium">
+                                    ✅ Terpilih: <strong>{selectedMurid.nama_lengkap}</strong> ({selectedMurid.nama_kelas}) - NIS: {selectedMurid.nis || '-'}
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">Bulan</label>
+                                    <select value={bulan} onChange={(e) => setBulan(parseInt(e.target.value))} className="input-field">
+                                        {BULAN.map((b, i) => (
+                                            <option key={i} value={i + 1}>{b}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">Tahun</label>
+                                    <input type="number" value={tahun} onChange={(e) => setTahun(parseInt(e.target.value))} className="input-field" />
+                                </div>
                             </div>
-                            <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-2">Tahun</label>
-                                <input type="number" value={tahun} onChange={(e) => setTahun(parseInt(e.target.value))} className="input-field" />
-                            </div>
-                            <div className="md:col-span-3">
-                                <button onClick={handleTampilkan} disabled={loading} className="btn-primary disabled:opacity-50">
-                                    {loading ? '⏳ Memuat...' : '🔍 Tampilkan Laporan'}
-                                </button>
-                            </div>
+
+                            <button
+                                onClick={handleTampilkan}
+                                disabled={loading || !selectedMurid}
+                                className="btn-primary w-full py-3 disabled:opacity-50 font-bold"
+                            >
+                                {loading ? '⏳ Memuat...' : '🔍 Tampilkan Laporan'}
+                            </button>
                         </div>
                     )}
 
@@ -191,9 +366,9 @@ export default function Laporan() {
                     <>
                         <div className="card mb-4 print:hidden">
                             <div className="flex gap-2 flex-wrap">
-                                <button onClick={downloadPDF} className="btn-success">📥 Download PDF</button>
-                                <button onClick={() => window.print()} className="btn-primary">🖨️ Cetak</button>
-                                <button onClick={() => setLaporan(null)} className="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-lg">✕ Tutup</button>
+                                <button onClick={downloadPDF} className="btn-success font-bold">📥 Download PDF</button>
+                                <button onClick={() => window.print()} className="btn-primary font-bold">🖨️ Cetak</button>
+                                <button onClick={() => setLaporan(null)} className="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-lg font-bold">✕ Tutup</button>
                             </div>
                         </div>
 
@@ -203,10 +378,10 @@ export default function Laporan() {
                                 <div className="flex items-center gap-4">
                                     <img src="/logo-sekolah.png" alt="Logo" className="w-20 h-20 object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
                                     <div className="flex-1 text-center">
-                                        <p className="text-sm font-semibold">PEMERINTAH KABUPATEN</p>
+                                        <p className="text-sm font-semibold">PEMERINTAH KABUPATEN SRAGEN</p>
                                         <p className="text-sm font-semibold">DINAS PENDIDIKAN DAN KEBUDAYAAN</p>
                                         <h1 className="text-2xl font-bold">SMP NEGERI 1 GONDANG</h1>
-                                        <p className="text-xs text-gray-600">Jl. Pendidikan No. 1, Gondang, Telp. (0355) 123456</p>
+                                        <p className="text-xs text-gray-600">Jl. Gondang-Winong Km.02, Glonggong, Gondang, Sragen 57254</p>
                                     </div>
                                 </div>
                             </div>
@@ -227,7 +402,7 @@ export default function Laporan() {
                                 </tbody>
                             </table>
 
-                            {/* STATISTIK */}
+                            {/* STATISTIK KEHADIRAN */}
                             <h3 className="font-bold bg-gray-100 px-3 py-1 mb-3">A. STATISTIK KEHADIRAN</h3>
                             <table className="w-full border-collapse border border-gray-400 text-sm mb-6">
                                 <tbody>
@@ -239,6 +414,7 @@ export default function Laporan() {
                                 </tbody>
                             </table>
 
+                            {/* STATISTIK PERILAKU */}
                             <h3 className="font-bold bg-gray-100 px-3 py-1 mb-3">B. STATISTIK PERILAKU</h3>
                             <table className="w-full border-collapse border border-gray-400 text-sm mb-6">
                                 <tbody>
@@ -248,9 +424,28 @@ export default function Laporan() {
                                 </tbody>
                             </table>
 
+                            {/* TOTAL POIN */}
                             <h3 className="font-bold bg-gray-100 px-3 py-1 mb-3">C. TOTAL POIN</h3>
                             <div className="text-center py-4 bg-blue-50 rounded-lg border-2 border-blue-200 mb-6">
                                 <p className="text-5xl font-bold text-primary">{laporan.statistik.total_poin}</p>
+                            </div>
+
+                            {/* CATATAN WALI KELAS */}
+                            <h3 className="font-bold bg-gray-100 px-3 py-1 mb-3">D. CATATAN WALI KELAS</h3>
+                            <div className="p-4 bg-gray-50 border border-gray-300 rounded-lg mb-6 min-h-[70px]">
+                                <p className="text-sm text-gray-800 whitespace-pre-line italic">
+                                    {laporan.catatan_wali_kelas 
+                                        ? typeof laporan.catatan_wali_kelas === 'object'
+                                            ? `"${laporan.catatan_wali_kelas.catatan || 'Belum ada catatan dari wali kelas.'}"`
+                                            : `"${laporan.catatan_wali_kelas}"`
+                                        : 'Belum ada catatan dari wali kelas.'
+                                    }
+                                </p>
+                                {laporan.catatan_wali_kelas?.wali_kelas_nama && (
+                                    <p className="text-xs text-gray-500 mt-2 text-right font-semibold">
+                                        — Wali Kelas: {laporan.catatan_wali_kelas.wali_kelas_nama}
+                                    </p>
+                                )}
                             </div>
 
                             {/* TANDA TANGAN */}
@@ -277,7 +472,7 @@ export default function Laporan() {
                         <div className="text-6xl mb-4">📄</div>
                         <h2 className="text-xl font-bold text-gray-800">Belum Ada Laporan</h2>
                         <p className="text-gray-600 mt-2">
-                            {isOrangTua ? 'Pilih anak dan periode, lalu klik "Tampilkan Laporan".' : 'Isi ID Murid, Bulan, Tahun, lalu klik Tampilkan.'}
+                            {isOrangTua ? 'Pilih anak dan periode, lalu klik "Tampilkan Laporan".' : 'Pilih Kelas, Nama Murid, Bulan, Tahun, lalu klik Tampilkan.'}
                         </p>
                     </div>
                 )}

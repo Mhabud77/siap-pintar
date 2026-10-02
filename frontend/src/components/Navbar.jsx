@@ -82,6 +82,7 @@ export default function Navbar() {
                 { icon: '🏠', label: 'Dashboard', path: '/orangtua' },
                 { icon: '🏫', label: 'Data Kelas', path: '/data-kelas' },
                 { icon: '🏆', label: 'Leaderboard', path: '/leaderboard' },
+                { icon: '📊', label: 'Rekap Absensi', path: '/rekap-absensi' }, // <--- TAMBAHKAN LINE INI
                 { icon: '📄', label: 'Laporan', path: '/laporan' },
                 { icon: '⚙️', label: 'Pengaturan', path: '/orangtua/pengaturan' },
             ],

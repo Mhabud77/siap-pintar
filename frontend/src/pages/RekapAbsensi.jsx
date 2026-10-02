@@ -18,8 +18,8 @@ export default function RekapAbsensi() {
     const [loadingData, setLoadingData] = useState(false);
     const [error, setError] = useState('');
 
-    // Filter
-    const [kelasId, setKelasId] = useState('all');
+    // Filter - UBAH STATE AWAL KELAS ID DARI 'all' MENJADI '' (STRING KOSONG)
+    const [kelasId, setKelasId] = useState('');
     const [periode, setPeriode] = useState('harian');
     const [bulan, setBulan] = useState(new Date().getMonth() + 1);
     const [tahun, setTahun] = useState(new Date().getFullYear());
@@ -31,28 +31,39 @@ export default function RekapAbsensi() {
     // Pagination
     const [page, setPage] = useState(1);
 
-    useEffect(() => { loadKelas(); }, [mode]);
+    // Penanda role Orang Tua
+    const isOrangTua = user?.role === 'orangtua';
+
+    useEffect(() => { 
+        loadKelas(); 
+    }, [mode]);
 
     const loadKelas = async () => {
         try {
-            // Kirim parameter mode ke backend
-            const url = `/kelas/untuk-filter?mode=${mode || 'guru'}`;
+            // Jika orangtua, kirim mode 'orangtua' ke backend
+            const currentMode = isOrangTua ? 'orangtua' : (mode || 'guru');
+            const url = `/kelas/untuk-filter?mode=${currentMode}`;
             const res = await api.get(url);
             const list = res.data.data || [];
             setKelasList(list);
 
-            // Auto-pilih kelas kalau mode wali & hanya 1 kelas
-            if (mode === 'wali' && list.length === 1) {
-                setKelasId(list[0].id);
-            } else if (mode === 'guru') {
-                // Mode guru mapel: default "Semua Kelas"
+            // Auto-pilih kelas pertama jika role Orang Tua atau mode Wali Kelas
+            if ((isOrangTua || mode === 'wali') && list.length > 0) {
+                setKelasId(String(list[0].id));
+            } else if (mode === 'guru' && !isOrangTua) {
+                setKelasId('all');
+            } else if (list.length > 0) {
+                setKelasId(String(list[0].id));
+            } else {
                 setKelasId('all');
             }
         } catch (err) {
             console.error('Load kelas error:', err);
             setKelasList([]);
+            setKelasId('all');
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     // Reset page saat filter berubah
@@ -61,10 +72,16 @@ export default function RekapAbsensi() {
     }, [kelasId, periode, bulan, tahun, tanggal, minggu, semester, filterJK]);
 
     useEffect(() => {
-        if (kelasId) loadRekap();
+        // HANYA JALANKAN LOAD REKAP JIKA kelasId SUDAH TERISI (BUKAN STRING KOSONG)
+        if (kelasId) {
+            loadRekap();
+        }
     }, [kelasId, periode, bulan, tahun, tanggal, minggu, semester, filterJK, page]);
 
     const loadRekap = async () => {
+        // CEGAH PEMANGGILAN JIKA KELAS_ID BELUM TERESET DENGAN BENAR
+        if (!kelasId) return;
+
         setLoadingData(true);
         setError('');
         setData(null);
@@ -168,7 +185,9 @@ export default function RekapAbsensi() {
                     <div className="flex justify-between items-start flex-wrap gap-4">
                         <div>
                             <h1 className="text-3xl font-bold text-gray-800">📊 Rekap Absensi</h1>
-                            <p className="text-gray-600 mt-1">Lihat rekap kehadiran murid per kelas</p>
+                            <p className="text-gray-600 mt-1">
+                                {isOrangTua ? 'Lihat rekap kehadiran kelas anak Anda' : 'Lihat rekap kehadiran murid per kelas'}
+                            </p>
                         </div>
                         {data && (<button onClick={handleExport} className="btn-success">📥 Export Excel</button>)}
                     </div>
@@ -179,8 +198,13 @@ export default function RekapAbsensi() {
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                         <div>
                             <label className="block text-sm font-bold text-gray-700 mb-1">Kelas</label>
-                            <select value={kelasId} onChange={(e) => setKelasId(e.target.value)} className="input-field">
-                                <option value="all">🏫 Semua Kelas</option>
+                            <select 
+                                value={kelasId} 
+                                onChange={(e) => setKelasId(e.target.value)} 
+                                disabled={isOrangTua && kelasList.length <= 1}
+                                className="input-field bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                            >
+                                {!isOrangTua && <option value="all">🏫 Semua Kelas</option>}
                                 {kelasList.map(k => (<option key={k.id} value={k.id}>{k.nama_kelas}</option>))}
                             </select>
                         </div>
@@ -394,10 +418,14 @@ export default function RekapAbsensi() {
                                                 <th className="px-3 py-3 text-left text-xs font-bold uppercase">Kelas</th>
                                             )}
                                             <th className="px-3 py-3 text-center text-xs font-bold uppercase">JK</th>
+                    
+                                            {/* TAMPILAN DINAMIS KHUSUS MODE HARIAN */}
                                             {isHarian ? (
                                                 <>
-                                                    <th className="px-3 py-3 text-center text-xs font-bold uppercase">Jam</th>
-                                                    <th className="px-3 py-3 text-center text-xs font-bold uppercase">Status</th>
+                                                    <th className="px-3 py-3 text-center text-xs font-bold uppercase">Jam Datang</th>
+                                                    <th className="px-3 py-3 text-center text-xs font-bold uppercase">Status Datang</th>
+                                                    <th className="px-3 py-3 text-center text-xs font-bold uppercase">Jam Pulang</th>
+                                                    <th className="px-3 py-3 text-center text-xs font-bold uppercase">Status Pulang</th>
                                                     <th className="px-3 py-3 text-center text-xs font-bold uppercase">Poin</th>
                                                 </>
                                             ) : (
@@ -447,14 +475,27 @@ export default function RekapAbsensi() {
 
                                                 {isHarian ? (
                                                     <>
+                                                        {/* Jam Datang */}
                                                         <td className="px-3 py-2 text-center text-sm font-mono text-gray-600">
                                                             {m.jam_datang ? m.jam_datang.slice(0, 5) : '-'}
                                                         </td>
+                                                        {/* Status Datang */}
                                                         <td className="px-3 py-2 text-center">
                                                             <span className={`inline-block px-2 py-1 rounded text-xs font-bold uppercase ${getStatusBadge(m.status)}`}>
                                                                 {m.status_label}
                                                             </span>
                                                         </td>
+                                                        {/* Jam Pulang */}
+                                                        <td className="px-3 py-2 text-center text-sm font-mono text-gray-600">
+                                                            {m.jam_pulang ? m.jam_pulang.slice(0, 5) : '-'}
+                                                        </td>
+                                                        {/* Status Pulang */}
+                                                        <td className="px-3 py-2 text-center">
+                                                            <span className={`inline-block px-2 py-1 rounded text-xs font-bold uppercase ${m.status_pulang !== '-' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'}`}>
+                                                                {m.status_pulang}
+                                                            </span>
+                                                        </td>
+                                                        {/* Poin */}
                                                         <td className="px-3 py-2 text-center">
                                                             <span className={`font-bold text-sm ${m.poin_didapat > 0 ? 'text-green-600' : m.poin_didapat < 0 ? 'text-red-600' : 'text-gray-500'}`}>
                                                                 {m.poin_didapat > 0 ? '+' : ''}{m.poin_didapat}

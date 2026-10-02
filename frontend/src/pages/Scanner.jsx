@@ -65,17 +65,19 @@ export default function Scanner() {
         return () => clearInterval(timer);
     }, []);
 
+    // Re-fetch manual apabila tab, kelas, atau mod berubah
     useEffect(() => {
         if (activeTab === 'manual') {
             loadMuridBelumAbsen();
         }
-    }, [activeTab, filterKelas]);
+    }, [activeTab, filterKelas, mode]);
 
+    // Re-fetch massal apabila tab, kelas, atau mod berubah
     useEffect(() => {
         if (activeTab === 'massal') {
             loadMuridMassal();
         }
-    }, [activeTab, massalKelas]);
+    }, [activeTab, massalKelas, mode]);
 
     // Debounce untuk Absensi Manual
     useEffect(() => {
@@ -83,7 +85,7 @@ export default function Scanner() {
             if (activeTab === 'manual') {
                 loadMuridBelumAbsen();
             }
-        }, 500);   // ← 500ms debounce
+        }, 500);
         return () => clearTimeout(timer);
     }, [searchMurid]);
 
@@ -93,7 +95,7 @@ export default function Scanner() {
             if (activeTab === 'massal') {
                 loadMuridMassal();
             }
-        }, 500);   // ← 500ms debounce
+        }, 500);
         return () => clearTimeout(timer);
     }, [massalSearch]);
 
@@ -125,10 +127,13 @@ export default function Scanner() {
         } catch (err) { console.error(err); }
     };
 
+    // ============================================
+    // MANUAL — Load murid berdasarkan tipe (datang / pulang)
+    // ============================================
     const loadMuridBelumAbsen = async () => {
         try {
             let url = '/absensi/belum-absen';
-            const params = [];
+            const params = [`tipe=${mode}`]; // Hantar parameter tipe
             if (filterKelas) params.push(`kelas_id=${filterKelas}`);
             if (searchMurid && searchMurid.length >= 2) {
                 params.push(`search=${encodeURIComponent(searchMurid)}`);
@@ -137,16 +142,17 @@ export default function Scanner() {
 
             const res = await api.get(url);
             setMuridList(res.data.data || []);
+            setSelectedMurid(null);
         } catch (err) { console.error(err); }
     };
 
     // ============================================
-    // MASSAL — Load murid untuk absensi massal
+    // MASSAL — Load murid berdasarkan tipe (datang / pulang)
     // ============================================
     const loadMuridMassal = async () => {
         try {
             let url = '/absensi/belum-absen';
-            const params = [];
+            const params = [`tipe=${mode}`]; // Hantar parameter tipe
             if (massalKelas) params.push(`kelas_id=${massalKelas}`);
             if (massalSearch && massalSearch.length >= 2) {
                 params.push(`search=${encodeURIComponent(massalSearch)}`);
@@ -213,7 +219,7 @@ export default function Scanner() {
             return;
         }
 
-        if (!confirm(`Yakin absen ${massalSelected.length} murid sekaligus dengan status "${massalStatus}"?`)) {
+        if (!confirm(`Yakin absen (${mode}) ${massalSelected.length} murid sekaligus?`)) {
             return;
         }
 
@@ -225,7 +231,7 @@ export default function Scanner() {
             const res = await api.post('/absensi/massal', {
                 murid_ids: massalSelected,
                 status: massalStatus,
-                keterangan: massalKeterangan || `Absensi massal (${massalStatus})`,
+                keterangan: massalKeterangan || `Absensi massal ${mode} (${massalStatus})`,
                 tipe: mode  // 'datang' atau 'pulang'
             });
 
@@ -295,7 +301,8 @@ export default function Scanner() {
             const res = await api.post('/absensi/manual', {
                 murid_id: selectedMurid.id,
                 status: manualStatus,
-                keterangan: keterangan || `Absensi manual (${manualStatus})`
+                keterangan: keterangan || `Absensi manual ${mode} (${manualStatus})`,
+                tipe: mode // Send 'datang' or 'pulang'
             });
             setManualMessage({ type: 'success', text: `✅ ${res.data.message}` });
             setSelectedMurid(null);
@@ -362,12 +369,9 @@ export default function Scanner() {
                     </div>
                 </div>
 
-                {/* ============================================ */}
                 {/* INFO JAM BUKA/TUTUP ABSENSI */}
-                {/* ============================================ */}
                 {statusJam && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                        {/* Absensi Datang */}
                         <div className={`rounded-2xl shadow-lg p-5 border-l-4 ${
                             statusJam.datang.aktif 
                                 ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-500' 
@@ -401,7 +405,6 @@ export default function Scanner() {
                             </div>
                         </div>
 
-                        {/* Absensi Pulang */}
                         <div className={`rounded-2xl shadow-lg p-5 border-l-4 ${
                             statusJam.pulang.aktif 
                                 ? 'bg-gradient-to-r from-orange-50 to-red-50 border-orange-500' 
@@ -440,83 +443,51 @@ export default function Scanner() {
                 {/* STATISTIK */}
                 {statistik && (
                     <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
-                        {/* Total Murid */}
-                        <button
-                            onClick={() => handleCardClick('total', 'Total Murid')}
-                            className="bg-white rounded-xl shadow-md p-3 border-l-4 border-gray-500 text-left hover:shadow-lg hover:scale-105 transition"
-                        >
+                        <button onClick={() => handleCardClick('total', 'Total Murid')} className="bg-white rounded-xl shadow-md p-3 border-l-4 border-gray-500 text-left hover:shadow-lg hover:scale-105 transition">
                             <p className="text-[10px] text-gray-500 font-bold uppercase">Total Murid</p>
                             <p className="text-2xl font-bold text-gray-700">{statistik.total_murid}</p>
                             <p className="text-[9px] text-gray-400 mt-1">Klik detail →</p>
                         </button>
 
-                        {/* Sudah Absen */}
-                        <button
-                            onClick={() => handleCardClick('sudah_absen', 'Sudah Absen')}
-                            className="bg-white rounded-xl shadow-md p-3 border-l-4 border-blue-500 text-left hover:shadow-lg hover:scale-105 transition"
-                        >
+                        <button onClick={() => handleCardClick('sudah_absen', 'Sudah Absen')} className="bg-white rounded-xl shadow-md p-3 border-l-4 border-blue-500 text-left hover:shadow-lg hover:scale-105 transition">
                             <p className="text-[10px] text-blue-500 font-bold uppercase">Sudah Absen</p>
                             <p className="text-2xl font-bold text-blue-700">{statistik.total_absen}</p>
                             <p className="text-[9px] text-gray-400 mt-1">Klik detail →</p>
                         </button>
 
-                        {/* Belum Absen */}
-                        <button
-                            onClick={() => handleCardClick('belum_absen', 'Belum Absen')}
-                            className="bg-white rounded-xl shadow-md p-3 border-l-4 border-orange-500 text-left hover:shadow-lg hover:scale-105 transition"
-                        >
+                        <button onClick={() => handleCardClick('belum_absen', 'Belum Absen')} className="bg-white rounded-xl shadow-md p-3 border-l-4 border-orange-500 text-left hover:shadow-lg hover:scale-105 transition">
                             <p className="text-[10px] text-orange-500 font-bold uppercase">Belum Absen</p>
                             <p className="text-2xl font-bold text-orange-700">{statistik.belum_absen}</p>
                             <p className="text-[9px] text-gray-400 mt-1">Klik detail →</p>
                         </button>
 
-                        {/* Hadir */}
-                        <button
-                            onClick={() => handleCardClick('hadir', 'Hadir')}
-                            className="bg-white rounded-xl shadow-md p-3 border-l-4 border-green-500 text-left hover:shadow-lg hover:scale-105 transition"
-                        >
+                        <button onClick={() => handleCardClick('hadir', 'Hadir')} className="bg-white rounded-xl shadow-md p-3 border-l-4 border-green-500 text-left hover:shadow-lg hover:scale-105 transition">
                             <p className="text-[10px] text-green-500 font-bold uppercase">✅ Hadir</p>
                             <p className="text-2xl font-bold text-green-700">{statistik.hadir}</p>
                             <p className="text-[9px] text-gray-400 mt-1">Klik detail →</p>
                         </button>
 
-                        {/* Terlambat */}
-                        <button
-                            onClick={() => handleCardClick('terlambat', 'Terlambat')}
-                            className="bg-white rounded-xl shadow-md p-3 border-l-4 border-red-500 text-left hover:shadow-lg hover:scale-105 transition"
-                        >
+                        <button onClick={() => handleCardClick('terlambat', 'Terlambat')} className="bg-white rounded-xl shadow-md p-3 border-l-4 border-red-500 text-left hover:shadow-lg hover:scale-105 transition">
                             <p className="text-[10px] text-red-500 font-bold uppercase">⏰ Terlambat</p>
                             <p className="text-2xl font-bold text-red-700">{statistik.terlambat}</p>
                             <p className="text-[9px] text-gray-400 mt-1">Klik detail →</p>
                         </button>
 
-                        {/* Izin/Sakit */}
-                        <button
-                            onClick={() => handleCardClick('izin_sakit', 'Izin / Sakit')}
-                            className="bg-white rounded-xl shadow-md p-3 border-l-4 border-yellow-500 text-left hover:shadow-lg hover:scale-105 transition"
-                        >
+                        <button onClick={() => handleCardClick('izin_sakit', 'Izin / Sakit')} className="bg-white rounded-xl shadow-md p-3 border-l-4 border-yellow-500 text-left hover:shadow-lg hover:scale-105 transition">
                             <p className="text-[10px] text-yellow-600 font-bold uppercase">📝 Izin/Sakit</p>
-                            <p className="text-2xl font-bold text-yellow-700">
-                                {(statistik.izin || 0) + (statistik.sakit || 0)}
-                            </p>
+                            <p className="text-2xl font-bold text-yellow-700">{(statistik.izin || 0) + (statistik.sakit || 0)}</p>
                             <p className="text-[9px] text-gray-400 mt-1">Klik detail →</p>
                         </button>
 
-                        {/* % Hadir */}
-                        <button
-                            onClick={() => handleCardClick('persen_hadir', 'Persentase Kehadiran per Kelas')}
-                            className="bg-white rounded-xl shadow-md p-3 border-l-4 border-purple-500 text-left hover:shadow-lg hover:scale-105 transition"
-                        >
+                        <button onClick={() => handleCardClick('persen_hadir', 'Persentase Kehadiran per Kelas')} className="bg-white rounded-xl shadow-md p-3 border-l-4 border-purple-500 text-left hover:shadow-lg hover:scale-105 transition">
                             <p className="text-[10px] text-purple-500 font-bold uppercase">% Hadir</p>
-                            <p className="text-2xl font-bold text-purple-700">
-                                {statistik.persen_hadir || 0}%
-                            </p>
+                            <p className="text-2xl font-bold text-purple-700">{statistik.persen_hadir || 0}%</p>
                             <p className="text-[9px] text-gray-400 mt-1">Klik detail →</p>
                         </button>
                     </div>
                 )}
 
-                {/* TAB SWITCH — 3 TAB */}
+                {/* TAB SWITCH */}
                 <div className="bg-white rounded-2xl shadow-lg p-2 mb-6 inline-flex gap-2 flex-wrap">
                     <button
                         onClick={() => setActiveTab('scan')}
@@ -565,9 +536,7 @@ export default function Scanner() {
                                         <button
                                             onClick={() => setMode('datang')}
                                             className={`flex-1 px-4 py-2 rounded-lg font-bold text-sm transition ${
-                                                mode === 'datang'
-                                                    ? 'bg-white text-blue-600 shadow-lg'
-                                                    : 'bg-white bg-opacity-20 text-white hover:bg-opacity-30'
+                                                mode === 'datang' ? 'bg-white text-blue-600 shadow-lg' : 'bg-white bg-opacity-20 text-white hover:bg-opacity-30'
                                             }`}
                                         >
                                             📥 Datang
@@ -575,9 +544,7 @@ export default function Scanner() {
                                         <button
                                             onClick={() => setMode('pulang')}
                                             className={`flex-1 px-4 py-2 rounded-lg font-bold text-sm transition ${
-                                                mode === 'pulang'
-                                                    ? 'bg-white text-red-600 shadow-lg'
-                                                    : 'bg-white bg-opacity-20 text-white hover:bg-opacity-30'
+                                                mode === 'pulang' ? 'bg-white text-red-600 shadow-lg' : 'bg-white bg-opacity-20 text-white hover:bg-opacity-30'
                                             }`}
                                         >
                                             📤 Pulang
@@ -586,23 +553,16 @@ export default function Scanner() {
                                 </div>
 
                                 <div className="p-6">
-                                    {/* INFO JAM MODE */}
                                     {statusJam && (
                                         <div className={`mb-4 p-3 rounded-lg text-sm ${
                                             (mode === 'datang' && statusJam.datang.aktif) || (mode === 'pulang' && statusJam.pulang.aktif)
-                                                ? mode === 'datang' 
-                                                    ? 'bg-blue-50 border-l-4 border-blue-500 text-blue-700'
-                                                    : 'bg-orange-50 border-l-4 border-orange-500 text-orange-700'
+                                                ? mode === 'datang' ? 'bg-blue-50 border-l-4 border-blue-500 text-blue-700' : 'bg-orange-50 border-l-4 border-orange-500 text-orange-700'
                                                 : 'bg-red-50 border-l-4 border-red-500 text-red-700'
                                         }`}>
                                             {mode === 'datang' ? (
-                                                statusJam.datang.aktif 
-                                                    ? `📥 Absensi Datang DIBUKA (${statusJam.datang.buka} - ${statusJam.datang.tutup})`
-                                                    : `⚠️ Absensi Datang DITUTUP (Jam operasional: ${statusJam.datang.buka} - ${statusJam.datang.tutup})`
+                                                statusJam.datang.aktif ? `📥 Absensi Datang DIBUKA (${statusJam.datang.buka} - ${statusJam.datang.tutup})` : `⚠️ Absensi Datang DITUTUP (${statusJam.datang.buka} - ${statusJam.datang.tutup})`
                                             ) : (
-                                                statusJam.pulang.aktif
-                                                    ? `📤 Absensi Pulang DIBUKA (${statusJam.pulang.buka} - ${statusJam.pulang.tutup})`
-                                                    : `⚠️ Absensi Pulang DITUTUP (Jam operasional: ${statusJam.pulang.buka} - ${statusJam.pulang.tutup})`
+                                                statusJam.pulang.aktif ? `📤 Absensi Pulang DIBUKA (${statusJam.pulang.buka} - ${statusJam.pulang.tutup})` : `⚠️ Absensi Pulang DITUTUP (${statusJam.pulang.buka} - ${statusJam.pulang.tutup})`
                                             )}
                                         </div>
                                     )}
@@ -611,9 +571,7 @@ export default function Scanner() {
 
                                     {scanResult && (
                                         <div className={`mt-6 border-2 rounded-2xl p-5 ${
-                                            scanResult.mode === 'pulang'
-                                                ? 'bg-gradient-to-r from-orange-50 to-red-50 border-orange-500'
-                                                : 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-500'
+                                            scanResult.mode === 'pulang' ? 'bg-gradient-to-r from-orange-50 to-red-50 border-orange-500' : 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-500'
                                         }`}>
                                             <div className="flex items-center gap-4">
                                                 <div className={`w-16 h-16 rounded-full flex items-center justify-center text-white text-3xl ${
@@ -622,9 +580,7 @@ export default function Scanner() {
                                                     {scanResult.mode === 'pulang' ? '📤' : '✅'}
                                                 </div>
                                                 <div className="flex-1">
-                                                    <p className={`text-lg font-bold ${
-                                                        scanResult.mode === 'pulang' ? 'text-orange-800' : 'text-green-800'
-                                                    }`}>
+                                                    <p className={`text-lg font-bold ${scanResult.mode === 'pulang' ? 'text-orange-800' : 'text-green-800'}`}>
                                                         {scanResult.mode === 'pulang' ? 'ABSENSI PULANG BERHASIL' : 'ABSENSI DATANG BERHASIL'}
                                                     </p>
                                                     <p className="text-2xl font-bold text-gray-800">{scanResult.nama}</p>
@@ -668,7 +624,7 @@ export default function Scanner() {
                         {activeTab === 'manual' && (
                             <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
                                 <div className="bg-gradient-to-r from-green-500 to-emerald-600 px-6 py-4">
-                                    <h2 className="text-white font-bold text-lg">✍️ Absensi Manual</h2>
+                                    <h2 className="text-white font-bold text-lg">✍️️ Absensi Manual</h2>
                                     <p className="text-green-100 text-sm">Input satu murid</p>
                                 </div>
                                 <div className="p-6">
@@ -681,6 +637,26 @@ export default function Scanner() {
                                             </p>
                                         </div>
                                     )}
+
+                                    {/* MODE SWITCHER DATANG/PULANG (DITAMBAHKAN) */}
+                                    <div className="mb-4 flex gap-2">
+                                        <button
+                                            onClick={() => setMode('datang')}
+                                            className={`flex-1 px-4 py-2 rounded-lg font-bold text-sm transition ${
+                                                mode === 'datang' ? 'bg-green-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                            }`}
+                                        >
+                                            📥 Absen Datang
+                                        </button>
+                                        <button
+                                            onClick={() => setMode('pulang')}
+                                            className={`flex-1 px-4 py-2 rounded-lg font-bold text-sm transition ${
+                                                mode === 'pulang' ? 'bg-orange-500 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                            }`}
+                                        >
+                                            📤 Absen Pulang
+                                        </button>
+                                    </div>
 
                                     <div className="mb-4">
                                         <label className="block text-sm font-bold text-gray-700 mb-2">1️⃣ Cari Murid</label>
@@ -706,11 +682,13 @@ export default function Scanner() {
                                     </div>
 
                                     <div className="mb-4">
-                                        <p className="text-xs text-gray-500 mb-2">{muridList.length} murid belum absen</p>
+                                        <p className="text-xs text-gray-500 mb-2">
+                                            {muridList.length} murid {mode === 'pulang' ? 'siap absen pulang' : 'belum absen datang'}
+                                        </p>
                                         <div className="border rounded-xl max-h-60 overflow-y-auto bg-gray-50">
                                             {muridList.length === 0 ? (
                                                 <p className="text-center py-8 text-gray-500 text-sm">
-                                                    {searchMurid ? 'Tidak ada yang cocok' : 'Semua murid sudah absen! 🎉'}
+                                                    {searchMurid ? 'Tidak ada yang cocok' : mode === 'pulang' ? 'Tidak ada murid yang siap absen pulang 🎉' : 'Semua murid sudah absen datang! 🎉'}
                                                 </p>
                                             ) : (
                                                 muridList.map(m => (
@@ -747,39 +725,41 @@ export default function Scanner() {
                                                 <p className="text-sm text-blue-600">{selectedMurid.nama_kelas} • NIS: {selectedMurid.nis}</p>
                                             </div>
 
-                                            <div className="mb-4">
-                                                <label className="block text-sm font-bold text-gray-700 mb-2">2️⃣ Status Kehadiran</label>
-                                                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                                                    {[
-                                                        { value: 'hadir', label: '✅ Hadir' },
-                                                        { value: 'terlambat', label: '⏰ Terlambat' },
-                                                        { value: 'izin', label: '📝 Izin' },
-                                                        { value: 'sakit', label: '🤒 Sakit' },
-                                                        { value: 'alpa', label: '❌ Alpa' }
-                                                    ].map(s => (
-                                                        <button
-                                                            key={s.value}
-                                                            type="button"
-                                                            onClick={() => setManualStatus(s.value)}
-                                                            className={`px-3 py-2 rounded-lg text-sm font-medium transition border-2 ${
-                                                                manualStatus === s.value
-                                                                    ? 'bg-primary text-white border-primary'
-                                                                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-                                                            }`}
-                                                        >
-                                                            {s.label}
-                                                        </button>
-                                                    ))}
+                                            {mode === 'datang' && (
+                                                <div className="mb-4">
+                                                    <label className="block text-sm font-bold text-gray-700 mb-2">2️⃣ Status Kehadiran</label>
+                                                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                                                        {[
+                                                            { value: 'hadir', label: '✅ Hadir' },
+                                                            { value: 'terlambat', label: '⏰ Terlambat' },
+                                                            { value: 'izin', label: '📝 Izin' },
+                                                            { value: 'sakit', label: '🤒 Sakit' },
+                                                            { value: 'alpa', label: '❌ Alpa' }
+                                                        ].map(s => (
+                                                            <button
+                                                                key={s.value}
+                                                                type="button"
+                                                                onClick={() => setManualStatus(s.value)}
+                                                                className={`px-3 py-2 rounded-lg text-sm font-medium transition border-2 ${
+                                                                    manualStatus === s.value ? 'bg-primary text-white border-primary' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                                                                }`}
+                                                            >
+                                                                {s.label}
+                                                            </button>
+                                                        ))}
+                                                    </div>
                                                 </div>
-                                            </div>
+                                            )}
 
                                             <div className="mb-4">
-                                                <label className="block text-sm font-bold text-gray-700 mb-2">3️⃣ Keterangan (opsional)</label>
+                                                <label className="block text-sm font-bold text-gray-700 mb-2">
+                                                    {mode === 'datang' ? '3️⃣ Keterangan (opsional)' : '2️⃣ Keterangan Pulang (opsional)'}
+                                                </label>
                                                 <input
                                                     type="text"
                                                     value={keterangan}
                                                     onChange={(e) => setKeterangan(e.target.value)}
-                                                    placeholder="Contoh: Sakit demam..."
+                                                    placeholder="Contoh: Pulang awal / ekstra..."
                                                     className="input-field"
                                                 />
                                             </div>
@@ -787,9 +767,11 @@ export default function Scanner() {
                                             <button
                                                 onClick={handleAbsensiManual}
                                                 disabled={saving}
-                                                className="w-full bg-gradient-to-r from-green-500 to-emerald-600 text-white py-4 rounded-xl font-bold text-lg hover:shadow-xl transition disabled:opacity-50"
+                                                className={`w-full text-white py-4 rounded-xl font-bold text-lg hover:shadow-xl transition disabled:opacity-50 ${
+                                                    mode === 'pulang' ? 'bg-gradient-to-r from-orange-500 to-red-600' : 'bg-gradient-to-r from-green-500 to-emerald-600'
+                                                }`}
                                             >
-                                                {saving ? '⏳ Menyimpan...' : '💾 Simpan Absensi'}
+                                                {saving ? '⏳ Menyimpan...' : mode === 'pulang' ? '💾 Simpan Absen Pulang' : '💾 Simpan Absensi Datang'}
                                             </button>
                                         </>
                                     )}
@@ -842,9 +824,7 @@ export default function Scanner() {
                                         <button
                                             onClick={() => setMode('datang')}
                                             className={`flex-1 px-4 py-2 rounded-lg font-bold text-sm transition ${
-                                                mode === 'datang'
-                                                    ? 'bg-blue-500 text-white shadow'
-                                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                                mode === 'datang' ? 'bg-blue-500 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                                             }`}
                                         >
                                             📥 Absen Datang
@@ -852,9 +832,7 @@ export default function Scanner() {
                                         <button
                                             onClick={() => setMode('pulang')}
                                             className={`flex-1 px-4 py-2 rounded-lg font-bold text-sm transition ${
-                                                mode === 'pulang'
-                                                    ? 'bg-orange-500 text-white shadow'
-                                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                                mode === 'pulang' ? 'bg-orange-500 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                                             }`}
                                         >
                                             📤 Absen Pulang
@@ -887,14 +865,8 @@ export default function Scanner() {
                                         <p className="text-sm text-gray-600">
                                             <strong>{massalSelected.length}</strong> dari <strong>{massalList.length}</strong> murid dipilih
                                         </p>
-                                        <button
-                                            onClick={selectAllMassal}
-                                            className="text-sm text-primary hover:underline font-medium"
-                                        >
-                                            {massalSelected.length === massalList.length && massalList.length > 0
-                                                ? '☐ Batalkan Semua'
-                                                : '☑️ Pilih Semua'
-                                            }
+                                        <button onClick={selectAllMassal} className="text-sm text-primary hover:underline font-medium">
+                                            {massalSelected.length === massalList.length && massalList.length > 0 ? '☐ Batalkan Semua' : '☑️ Pilih Semua'}
                                         </button>
                                     </div>
 
@@ -902,7 +874,7 @@ export default function Scanner() {
                                     <div className="mb-4 border rounded-xl max-h-80 overflow-y-auto bg-gray-50">
                                         {massalList.length === 0 ? (
                                             <p className="text-center py-8 text-gray-500 text-sm">
-                                                {massalSearch ? 'Tidak ada yang cocok' : 'Semua murid sudah absen! 🎉'}
+                                                {massalSearch ? 'Tidak ada yang cocok' : mode === 'pulang' ? 'Tidak ada murid yang siap absen pulang 🎉' : 'Semua murid sudah absen datang! 🎉'}
                                             </p>
                                         ) : (
                                             massalList.map(m => (
@@ -914,9 +886,7 @@ export default function Scanner() {
                                                     }`}
                                                 >
                                                     <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
-                                                        massalSelected.includes(m.id) 
-                                                            ? 'bg-purple-500 border-purple-500 text-white' 
-                                                            : 'border-gray-400'
+                                                        massalSelected.includes(m.id) ? 'bg-purple-500 border-purple-500 text-white' : 'border-gray-400'
                                                     }`}>
                                                         {massalSelected.includes(m.id) && '✓'}
                                                     </div>
@@ -936,37 +906,39 @@ export default function Scanner() {
                                         )}
                                     </div>
 
-                                    {/* STATUS */}
-                                    <div className="mb-4">
-                                        <label className="block text-sm font-bold text-gray-700 mb-2">
-                                            1️⃣ Status untuk Semua Murid Terpilih
-                                        </label>
-                                        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                                            {[
-                                                { value: 'hadir', label: '✅ Hadir' },
-                                                { value: 'terlambat', label: '⏰ Terlambat' },
-                                                { value: 'izin', label: '📝 Izin' },
-                                                { value: 'sakit', label: '🤒 Sakit' },
-                                                { value: 'alpa', label: '❌ Alpa' }
-                                            ].map(s => (
-                                                <button
-                                                    key={s.value}
-                                                    type="button"
-                                                    onClick={() => setMassalStatus(s.value)}
-                                                    className={`px-3 py-2 rounded-lg text-sm font-medium transition border-2 ${
-                                                        massalStatus === s.value
-                                                            ? 'bg-purple-500 text-white border-purple-600'
-                                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-                                                    }`}
-                                                >
-                                                    {s.label}
-                                                </button>
-                                            ))}
+                                    {/* STATUS (Hanya muncul jika mode === 'datang') */}
+                                    {mode === 'datang' && (
+                                        <div className="mb-4">
+                                            <label className="block text-sm font-bold text-gray-700 mb-2">
+                                                1️⃣ Status untuk Semua Murid Terpilih
+                                            </label>
+                                            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                                                {[
+                                                    { value: 'hadir', label: '✅ Hadir' },
+                                                    { value: 'terlambat', label: '⏰ Terlambat' },
+                                                    { value: 'izin', label: '📝 Izin' },
+                                                    { value: 'sakit', label: '🤒 Sakit' },
+                                                    { value: 'alpa', label: '❌ Alpa' }
+                                                ].map(s => (
+                                                    <button
+                                                        key={s.value}
+                                                        type="button"
+                                                        onClick={() => setMassalStatus(s.value)}
+                                                        className={`px-3 py-2 rounded-lg text-sm font-medium transition border-2 ${
+                                                            massalStatus === s.value ? 'bg-purple-500 text-white border-purple-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                                                        }`}
+                                                    >
+                                                        {s.label}
+                                                    </button>
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
 
                                     <div className="mb-4">
-                                        <label className="block text-sm font-bold text-gray-700 mb-2">2️⃣ Keterangan (opsional)</label>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">
+                                            {mode === 'datang' ? '2️⃣ Keterangan (opsional)' : '1️⃣ Keterangan Pulang (opsional)'}
+                                        </label>
                                         <input
                                             type="text"
                                             value={massalKeterangan}
@@ -979,12 +951,11 @@ export default function Scanner() {
                                     <button
                                         onClick={handleMassal}
                                         disabled={massalSaving || massalSelected.length === 0}
-                                        className="w-full bg-gradient-to-r from-purple-500 to-pink-600 text-white py-4 rounded-xl font-bold text-lg hover:shadow-xl transition disabled:opacity-50"
+                                        className={`w-full text-white py-4 rounded-xl font-bold text-lg hover:shadow-xl transition disabled:opacity-50 ${
+                                            mode === 'pulang' ? 'bg-gradient-to-r from-orange-500 to-red-600' : 'bg-gradient-to-r from-purple-500 to-pink-600'
+                                        }`}
                                     >
-                                        {massalSaving 
-                                            ? '⏳ Menyimpan...' 
-                                            : `💾 Simpan Absensi (${massalSelected.length} murid)`
-                                        }
+                                        {massalSaving ? '⏳ Menyimpan...' : `💾 Simpan Absen ${mode === 'pulang' ? 'Pulang' : 'Datang'} (${massalSelected.length} murid)`}
                                     </button>
                                 </div>
                             </div>
@@ -1039,35 +1010,27 @@ export default function Scanner() {
                     </div>
                 </div>
             </div>
-            {/* ============================================ */}
+
             {/* MODAL DETAIL STATISTIK */}
-            {/* ============================================ */}
             {showModal && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
-                        {/* Header */}
                         <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-6 py-4 rounded-t-2xl flex justify-between items-center">
                             <div>
                                 <h3 className="text-xl font-bold">📋 {modalTitle}</h3>
                                 <p className="text-blue-100 text-xs">{modalData.length} data ditemukan</p>
                             </div>
-                            <button
-                                onClick={() => setShowModal(false)}
-                                className="text-white hover:bg-white hover:bg-opacity-20 rounded-full w-8 h-8 flex items-center justify-center text-2xl"
-                            >
+                            <button onClick={() => setShowModal(false)} className="text-white hover:bg-white hover:bg-opacity-20 rounded-full w-8 h-8 flex items-center justify-center text-2xl">
                                 ×
                             </button>
                         </div>
 
-                        {/* Filter Kelas (khusus persen_hadir tidak perlu) */}
                         {modalKategori !== 'persen_hadir' && (
                             <div className="px-6 py-3 border-b bg-gray-50 flex gap-2 flex-wrap items-center">
                                 <label className="text-xs font-bold text-gray-600">Filter Kelas:</label>
                                 <button
                                     onClick={() => loadModalWithKelas(modalKategori, '')}
-                                    className={`px-3 py-1 rounded text-xs font-medium ${
-                                        modalKelasFilter === '' ? 'bg-primary text-white' : 'bg-white border'
-                                    }`}
+                                    className={`px-3 py-1 rounded text-xs font-medium ${modalKelasFilter === '' ? 'bg-primary text-white' : 'bg-white border'}`}
                                 >
                                     Semua
                                 </button>
@@ -1075,9 +1038,7 @@ export default function Scanner() {
                                     <button
                                         key={k.id}
                                         onClick={() => loadModalWithKelas(modalKategori, k.id)}
-                                        className={`px-3 py-1 rounded text-xs font-medium ${
-                                            modalKelasFilter === k.id ? 'bg-primary text-white' : 'bg-white border'
-                                        }`}
+                                        className={`px-3 py-1 rounded text-xs font-medium ${modalKelasFilter === k.id ? 'bg-primary text-white' : 'bg-white border'}`}
                                     >
                                         {k.nama_kelas}
                                     </button>
@@ -1085,7 +1046,6 @@ export default function Scanner() {
                             </div>
                         )}
 
-                        {/* Body */}
                         <div className="p-4 overflow-y-auto flex-1">
                             {loadingModal ? (
                                 <div className="text-center py-12">
@@ -1098,7 +1058,6 @@ export default function Scanner() {
                                     <p className="text-gray-600">Tidak ada data</p>
                                 </div>
                             ) : modalKategori === 'persen_hadir' ? (
-                                /* Tampilan khusus % Hadir per Kelas */
                                 <div className="space-y-3">
                                     {modalData.map((k, index) => (
                                         <div key={k.kelas_id} className="flex items-center gap-4 p-4 bg-gray-50 rounded-xl border-l-4 border-purple-500">
@@ -1107,14 +1066,9 @@ export default function Scanner() {
                                             </span>
                                             <div className="flex-1">
                                                 <p className="font-bold text-lg">{k.nama_kelas}</p>
-                                                <p className="text-xs text-gray-500">
-                                                    {k.total_hadir} dari {k.total_murid} murid hadir
-                                                </p>
+                                                <p className="text-xs text-gray-500">{k.total_hadir} dari {k.total_murid} murid hadir</p>
                                                 <div className="mt-2 w-full bg-gray-200 rounded-full h-3">
-                                                    <div
-                                                        className="bg-gradient-to-r from-blue-500 to-purple-600 h-3 rounded-full"
-                                                        style={{ width: `${k.persen_hadir}%` }}
-                                                    />
+                                                    <div className="bg-gradient-to-r from-blue-500 to-purple-600 h-3 rounded-full" style={{ width: `${k.persen_hadir}%` }} />
                                                 </div>
                                             </div>
                                             <div className="text-right">
@@ -1124,17 +1078,12 @@ export default function Scanner() {
                                     ))}
                                 </div>
                             ) : (
-                                /* Tampilan daftar murid */
                                 <div className="space-y-2">
                                     {modalData.map((m, index) => (
                                         <div key={m.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100">
                                             <span className="font-bold text-gray-500 w-8 text-center">{index + 1}</span>
                                             {m.foto_profil ? (
-                                                <img
-                                                    src={`${BASE_URL}${m.foto_profil}`}
-                                                    alt={m.nama_lengkap}
-                                                    className="w-10 h-10 rounded-full object-cover"
-                                                />
+                                                <img src={`${BASE_URL}${m.foto_profil}`} alt={m.nama_lengkap} className="w-10 h-10 rounded-full object-cover" />
                                             ) : (
                                                 <div className="w-10 h-10 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full flex items-center justify-center text-white font-bold text-xs">
                                                     {m.nama_lengkap?.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()}
@@ -1142,17 +1091,14 @@ export default function Scanner() {
                                             )}
                                             <div className="flex-1">
                                                 <p className="font-bold text-sm">{m.nama_lengkap}</p>
-                                                <p className="text-xs text-gray-500">
-                                                    {m.nama_kelas} • NIS: {m.nis}
-                                                </p>
+                                                <p className="text-xs text-gray-500">{m.nama_kelas} • NIS: {m.nis}</p>
                                             </div>
                                             {m.status && (
                                                 <span className={`text-xs px-3 py-1 rounded-full font-bold ${
                                                     m.status === 'hadir' ? 'bg-green-100 text-green-700' :
                                                     m.status === 'terlambat' ? 'bg-red-100 text-red-700' :
                                                     m.status === 'izin' ? 'bg-yellow-100 text-yellow-700' :
-                                                    m.status === 'sakit' ? 'bg-blue-100 text-blue-700' :
-                                                    'bg-gray-100 text-gray-700'
+                                                    m.status === 'sakit' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
                                                 }`}>
                                                     {m.status.toUpperCase()}
                                                 </span>
@@ -1168,12 +1114,8 @@ export default function Scanner() {
                             )}
                         </div>
 
-                        {/* Footer */}
                         <div className="px-6 py-3 border-t flex justify-end">
-                            <button
-                                onClick={() => setShowModal(false)}
-                                className="bg-gray-300 hover:bg-gray-400 text-gray-800 px-6 py-2 rounded-lg font-medium"
-                            >
+                            <button onClick={() => setShowModal(false)} className="bg-gray-300 hover:bg-gray-400 text-gray-800 px-6 py-2 rounded-lg font-medium">
                                 Tutup
                             </button>
                         </div>

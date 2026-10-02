@@ -14,33 +14,46 @@ function getNamaHari(hari) {
     return arr[hari] || '';
 }
 
+// Helper untuk format objek Date lokal ke format YYYY-MM-DD tanpa terpengaruh UTC conversion
+function formatDateLocal(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 function getRangeTanggal(periode, bulan, tahun, tanggal, minggu, semester) {
-    const tahunNum = parseInt(tahun);
-    const bulanNum = parseInt(bulan);
+    const now = new Date();
+    const tahunNum = parseInt(tahun) || now.getFullYear();
+    const bulanNum = parseInt(bulan) || (now.getMonth() + 1);
 
     if (periode === 'harian') {
-        const tgl = tanggal || new Date().toISOString().split('T')[0];
-        const d = new Date(tgl);
+        const tgl = tanggal || formatDateLocal(now);
+        const parts = tgl.split('-').map(Number);
+        const d = new Date(parts[0], parts[1] - 1, parts[2]);
         const label = `${getNamaHari(d.getDay())}, ${d.getDate()} ${getNamaBulan(d.getMonth() + 1)} ${d.getFullYear()}`;
         return { start: tgl, end: tgl, label };
     } 
     else if (periode === 'mingguan') {
         const mingguNum = parseInt(minggu) || 1;
         let startDate = new Date(tahunNum, bulanNum - 1, 1);
-        while (startDate.getDay() !== 1) {
+        while (startDate.getDay() !== 1) { // 1 = Senin
             startDate.setDate(startDate.getDate() + 1);
         }
         startDate.setDate(startDate.getDate() + (mingguNum - 1) * 7);
         const endDate = new Date(startDate);
         endDate.setDate(endDate.getDate() + 6);
-        const start = startDate.toISOString().split('T')[0];
-        const end = endDate.toISOString().split('T')[0];
+
+        const start = formatDateLocal(startDate);
+        const end = formatDateLocal(endDate);
         const label = `Minggu ke-${mingguNum} (${startDate.getDate()} - ${endDate.getDate()} ${getNamaBulan(bulanNum)} ${tahunNum})`;
         return { start, end, label };
     }
     else if (periode === 'bulanan') {
-        const start = `${tahunNum}-${String(bulanNum).padStart(2, '0')}-01`;
-        const end = new Date(tahunNum, bulanNum, 0).toISOString().split('T')[0];
+        const startDate = new Date(tahunNum, bulanNum - 1, 1);
+        const endDate = new Date(tahunNum, bulanNum, 0); // Hari terakhir bulan
+        const start = formatDateLocal(startDate);
+        const end = formatDateLocal(endDate);
         return { start, end, label: `${getNamaBulan(bulanNum)} ${tahunNum}` };
     }
     else if (periode === 'semester') {
@@ -96,9 +109,7 @@ exports.getRekapAbsensiKelas = async (req, res) => {
             kelasData = kelas[0];
         }
 
-        // ============================================
         // BUILD QUERY
-        // ============================================
         let baseQuery = `
             FROM murid m
             JOIN users u ON m.user_id = u.id
@@ -125,8 +136,8 @@ exports.getRekapAbsensiKelas = async (req, res) => {
         const totalMurid = countResult[0].total;
 
         // Ambil data murid dengan pagination
-        const limitNum = parseInt(limit);
-        const offsetNum = parseInt(offset);
+        const limitNum = Math.max(1, parseInt(limit) || 32);
+        const offsetNum = Math.max(0, parseInt(offset) || 0);
 
         const selectQuery = `
             SELECT 
@@ -182,9 +193,7 @@ exports.getRekapAbsensiKelas = async (req, res) => {
             };
         });
 
-        // ============================================
-        // STATISTIK (hitung dari SEMUA data, bukan cuma yang di-page)
-        // ============================================
+        // STATISTIK (hitung dari SEMUA data)
         const [statQuery] = await db.query(`
             SELECT 
                 m.jenis_kelamin,
@@ -259,7 +268,7 @@ exports.getRekapHarian = async (req, res) => {
             limit = 32, offset = 0 
         } = req.query;
 
-        const tgl = tanggal || new Date().toISOString().split('T')[0];
+        const tgl = tanggal || formatDateLocal(new Date());
         const isSemuaKelas = !kelas_id || kelas_id === '' || kelas_id === 'all' || kelas_id === 'semua';
 
         let kelasData = { id: 'all', nama_kelas: 'Semua Kelas', tingkat: '-', wali_kelas_nama: '-' };
@@ -304,15 +313,15 @@ exports.getRekapHarian = async (req, res) => {
         );
         const totalMurid = countResult[0].total;
 
-        const limitNum = parseInt(limit);
-        const offsetNum = parseInt(offset);
+        const limitNum = Math.max(1, parseInt(limit) || 32);
+        const offsetNum = Math.max(0, parseInt(offset) || 0);
 
         const [murid] = await db.query(`
             SELECT 
                 m.id, m.nis, m.jenis_kelamin,
                 u.nama_lengkap, u.foto_profil,
                 k.nama_kelas,
-                a.jam_datang, a.status, a.poin_didapat, a.keterangan
+                a.jam_datang, a.status, a.jam_pulang, a.status_pulang, a.poin_didapat, a.keterangan
             ${baseQuery}
             ORDER BY k.tingkat, k.nama_kelas, u.nama_lengkap
             LIMIT ? OFFSET ?
@@ -337,6 +346,8 @@ exports.getRekapHarian = async (req, res) => {
                 jam_datang: m.jam_datang,
                 status: m.status || 'belum_absen',
                 status_label: m.status === 'hadir' ? 'Hadir' : m.status === 'terlambat' ? 'Terlambat' : m.status === 'izin' ? 'Izin' : m.status === 'sakit' ? 'Sakit' : m.status === 'alpa' ? 'Alpa' : 'Belum Absen',
+                jam_pulang: m.jam_pulang || null,
+                status_pulang: m.status_pulang || '-',
                 poin_didapat: m.poin_didapat || 0,
                 keterangan: m.keterangan,
                 is_hadir: isHadir,
@@ -371,6 +382,9 @@ exports.getRekapHarian = async (req, res) => {
             ? Math.round((statistik.total_hadir / statistik.total_murid) * 100)
             : 0;
 
+        const partsTgl = tgl.split('-').map(Number);
+        const dateObj = new Date(partsTgl[0], partsTgl[1] - 1, partsTgl[2]);
+
         res.json({
             success: true,
             data: {
@@ -378,7 +392,7 @@ exports.getRekapHarian = async (req, res) => {
                 murid: muridFormatted,
                 statistik,
                 tanggal: tgl,
-                tanggal_label: `${getNamaHari(new Date(tgl).getDay())}, ${new Date(tgl).getDate()} ${getNamaBulan(new Date(tgl).getMonth() + 1)} ${new Date(tgl).getFullYear()}`,
+                tanggal_label: `${getNamaHari(dateObj.getDay())}, ${dateObj.getDate()} ${getNamaBulan(dateObj.getMonth() + 1)} ${dateObj.getFullYear()}`,
                 is_semua_kelas: isSemuaKelas,
                 pagination: {
                     total: totalMurid,
@@ -422,96 +436,168 @@ exports.exportRekapExcel = async (req, res) => {
             kelasData = kelas[0];
         }
 
-        let query = `
-            SELECT 
-                m.id, m.nis, m.jenis_kelamin, u.nama_lengkap,
-                k.nama_kelas,
-                (SELECT COUNT(*) FROM absensi WHERE murid_id = m.id AND tanggal BETWEEN ? AND ? AND status = 'hadir') AS hadir_ontime,
-                (SELECT COUNT(*) FROM absensi WHERE murid_id = m.id AND tanggal BETWEEN ? AND ? AND status = 'terlambat') AS terlambat,
-                (SELECT COUNT(*) FROM absensi WHERE murid_id = m.id AND tanggal BETWEEN ? AND ? AND status = 'izin') AS izin,
-                (SELECT COUNT(*) FROM absensi WHERE murid_id = m.id AND tanggal BETWEEN ? AND ? AND status = 'sakit') AS sakit,
-                (SELECT COUNT(*) FROM absensi WHERE murid_id = m.id AND tanggal BETWEEN ? AND ? AND status = 'alpa') AS alpa
-            FROM murid m
-            JOIN users u ON m.user_id = u.id
-            JOIN kelas k ON m.kelas_id = k.id
-            WHERE 1=1
-        `;
-        const params = [start, end, start, end, start, end, start, end, start, end];
-
-        if (!isSemuaKelas) {
-            query += ' AND m.kelas_id = ?';
-            params.push(kelas_id);
-        }
-        if (jenis_kelamin && ['L', 'P'].includes(jenis_kelamin)) {
-            query += ' AND m.jenis_kelamin = ?';
-            params.push(jenis_kelamin);
-        }
-        query += ' ORDER BY k.tingkat, k.nama_kelas, u.nama_lengkap';
-
-        const [murid] = await db.query(query, params);
-
-        const muridFormatted = murid.map((m, index) => {
-            const totalHadir = m.hadir_ontime + m.terlambat;
-            const izinSakit = m.izin + m.sakit;
-            const totalAbsen = totalHadir + izinSakit + m.alpa;
-            return {
-                no: index + 1,
-                nis: m.nis,
-                nama: m.nama_lengkap,
-                kelas: m.nama_kelas,
-                jenis_kelamin: m.jenis_kelamin === 'L' ? 'L' : m.jenis_kelamin === 'P' ? 'P' : '-',
-                hadir_ontime: m.hadir_ontime,
-                terlambat: m.terlambat,
-                hadir_total: totalHadir,
-                izin: m.izin,
-                sakit: m.sakit,
-                izin_sakit: izinSakit,
-                alpa: m.alpa,
-                total_absen: totalAbsen,
-                persen_hadir: totalAbsen > 0 ? Math.round((totalHadir / totalAbsen) * 100) : 0
-            };
-        });
-
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet(`Rekap`);
 
-        worksheet.mergeCells('A1:L1');
-        worksheet.getCell('A1').value = `REKAP ABSENSI ${kelasData.nama_kelas.toUpperCase()}`;
-        worksheet.getCell('A1').font = { size: 16, bold: true };
-        worksheet.getCell('A1').alignment = { horizontal: 'center' };
+        if (periode === 'harian') {
+            const tgl = start;
+            let query = `
+                SELECT 
+                    m.id, m.nis, m.jenis_kelamin, u.nama_lengkap, k.nama_kelas,
+                    a.jam_datang, a.status, a.jam_pulang, a.status_pulang, a.poin_didapat, a.keterangan
+                FROM murid m
+                JOIN users u ON m.user_id = u.id
+                JOIN kelas k ON m.kelas_id = k.id
+                LEFT JOIN absensi a ON a.murid_id = m.id AND a.tanggal = ?
+                WHERE 1=1
+            `;
+            const params = [tgl];
 
-        worksheet.mergeCells('A2:L2');
-        worksheet.getCell('A2').value = `Periode: ${label}`;
-        worksheet.getCell('A2').font = { size: 12 };
-        worksheet.getCell('A2').alignment = { horizontal: 'center' };
+            if (!isSemuaKelas) {
+                query += ' AND m.kelas_id = ?';
+                params.push(kelas_id);
+            }
+            if (jenis_kelamin && ['L', 'P'].includes(jenis_kelamin)) {
+                query += ' AND m.jenis_kelamin = ?';
+                params.push(jenis_kelamin);
+            }
+            query += ' ORDER BY k.tingkat, k.nama_kelas, u.nama_lengkap';
 
-        worksheet.mergeCells('A3:L3');
-        worksheet.getCell('A3').value = `Wali Kelas: ${kelasData.wali_kelas_nama || '-'}`;
-        worksheet.getCell('A3').font = { size: 11, italic: true };
-        worksheet.getCell('A3').alignment = { horizontal: 'center' };
+            const [murid] = await db.query(query, params);
 
-        const headerRow = worksheet.getRow(5);
-        headerRow.values = ['No', 'NIS', 'Nama', 'Kelas', 'JK', 'Hadir', 'Terlambat', 'Total Hadir', 'Izin', 'Sakit', 'Alpa', '% Hadir'];
-        headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-        headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
-        headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-        headerRow.height = 35;
+            worksheet.mergeCells('A1:K1');
+            worksheet.getCell('A1').value = `REKAP ABSENSI HARIAN - ${kelasData.nama_kelas.toUpperCase()}`;
+            worksheet.getCell('A1').font = { size: 16, bold: true };
+            worksheet.getCell('A1').alignment = { horizontal: 'center' };
 
-        worksheet.columns = [
-            { width: 5 }, { width: 12 }, { width: 30 }, { width: 10 }, { width: 6 },
-            { width: 8 }, { width: 12 }, { width: 12 }, { width: 8 }, { width: 8 },
-            { width: 8 }, { width: 10 }
-        ];
+            worksheet.mergeCells('A2:K2');
+            worksheet.getCell('A2').value = `Tanggal: ${label}`;
+            worksheet.getCell('A2').font = { size: 12 };
+            worksheet.getCell('A2').alignment = { horizontal: 'center' };
 
-        muridFormatted.forEach((m, index) => {
-            const row = worksheet.addRow([
-                m.no, m.nis, m.nama, m.kelas, m.jenis_kelamin,
-                m.hadir_ontime, m.terlambat, m.hadir_total,
-                m.izin, m.sakit, m.alpa,
-                `${m.persen_hadir}%`
-            ]);
-            if (index % 2 === 0) row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
-        });
+            worksheet.mergeCells('A3:K3');
+            worksheet.getCell('A3').value = `Wali Kelas: ${kelasData.wali_kelas_nama || '-'}`;
+            worksheet.getCell('A3').font = { size: 11, italic: true };
+            worksheet.getCell('A3').alignment = { horizontal: 'center' };
+
+            const headerRow = worksheet.getRow(5);
+            headerRow.values = ['No', 'NIS', 'Nama', 'Kelas', 'JK', 'Jam Datang', 'Status Datang', 'Jam Pulang', 'Status Pulang', 'Poin', 'Keterangan'];
+            headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
+            headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+            headerRow.height = 35;
+
+            worksheet.columns = [
+                { width: 5 }, { width: 12 }, { width: 30 }, { width: 10 }, { width: 6 },
+                { width: 12 }, { width: 15 }, { width: 12 }, { width: 15 }, { width: 8 }, { width: 25 }
+            ];
+
+            murid.forEach((m, index) => {
+                const statusLabel = m.status === 'hadir' ? 'Hadir' : m.status === 'terlambat' ? 'Terlambat' : m.status === 'izin' ? 'Izin' : m.status === 'sakit' ? 'Sakit' : m.status === 'alpa' ? 'Alpa' : 'Belum Absen';
+                const row = worksheet.addRow([
+                    index + 1,
+                    m.nis,
+                    m.nama_lengkap,
+                    m.nama_kelas,
+                    m.jenis_kelamin === 'L' ? 'L' : m.jenis_kelamin === 'P' ? 'P' : '-',
+                    m.jam_datang ? m.jam_datang.slice(0, 5) : '-',
+                    statusLabel,
+                    m.jam_pulang ? m.jam_pulang.slice(0, 5) : '-',
+                    m.status_pulang || '-',
+                    m.poin_didapat || 0,
+                    m.keterangan || '-'
+                ]);
+                if (index % 2 === 0) row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+            });
+        } else {
+            let query = `
+                SELECT 
+                    m.id, m.nis, m.jenis_kelamin, u.nama_lengkap,
+                    k.nama_kelas,
+                    (SELECT COUNT(*) FROM absensi WHERE murid_id = m.id AND tanggal BETWEEN ? AND ? AND status = 'hadir') AS hadir_ontime,
+                    (SELECT COUNT(*) FROM absensi WHERE murid_id = m.id AND tanggal BETWEEN ? AND ? AND status = 'terlambat') AS terlambat,
+                    (SELECT COUNT(*) FROM absensi WHERE murid_id = m.id AND tanggal BETWEEN ? AND ? AND status = 'izin') AS izin,
+                    (SELECT COUNT(*) FROM absensi WHERE murid_id = m.id AND tanggal BETWEEN ? AND ? AND status = 'sakit') AS sakit,
+                    (SELECT COUNT(*) FROM absensi WHERE murid_id = m.id AND tanggal BETWEEN ? AND ? AND status = 'alpa') AS alpa
+                FROM murid m
+                JOIN users u ON m.user_id = u.id
+                JOIN kelas k ON m.kelas_id = k.id
+                WHERE 1=1
+            `;
+            const params = [start, end, start, end, start, end, start, end, start, end];
+
+            if (!isSemuaKelas) {
+                query += ' AND m.kelas_id = ?';
+                params.push(kelas_id);
+            }
+            if (jenis_kelamin && ['L', 'P'].includes(jenis_kelamin)) {
+                query += ' AND m.jenis_kelamin = ?';
+                params.push(jenis_kelamin);
+            }
+            query += ' ORDER BY k.tingkat, k.nama_kelas, u.nama_lengkap';
+
+            const [murid] = await db.query(query, params);
+
+            const muridFormatted = murid.map((m, index) => {
+                const totalHadir = m.hadir_ontime + m.terlambat;
+                const izinSakit = m.izin + m.sakit;
+                const totalAbsen = totalHadir + izinSakit + m.alpa;
+                return {
+                    no: index + 1,
+                    nis: m.nis,
+                    nama: m.nama_lengkap,
+                    kelas: m.nama_kelas,
+                    jenis_kelamin: m.jenis_kelamin === 'L' ? 'L' : m.jenis_kelamin === 'P' ? 'P' : '-',
+                    hadir_ontime: m.hadir_ontime,
+                    terlambat: m.terlambat,
+                    hadir_total: totalHadir,
+                    izin: m.izin,
+                    sakit: m.sakit,
+                    izin_sakit: izinSakit,
+                    alpa: m.alpa,
+                    total_absen: totalAbsen,
+                    persen_hadir: totalAbsen > 0 ? Math.round((totalHadir / totalAbsen) * 100) : 0
+                };
+            });
+
+            worksheet.mergeCells('A1:L1');
+            worksheet.getCell('A1').value = `REKAP ABSENSI ${kelasData.nama_kelas.toUpperCase()}`;
+            worksheet.getCell('A1').font = { size: 16, bold: true };
+            worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+            worksheet.mergeCells('A2:L2');
+            worksheet.getCell('A2').value = `Periode: ${label}`;
+            worksheet.getCell('A2').font = { size: 12 };
+            worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+            worksheet.mergeCells('A3:L3');
+            worksheet.getCell('A3').value = `Wali Kelas: ${kelasData.wali_kelas_nama || '-'}`;
+            worksheet.getCell('A3').font = { size: 11, italic: true };
+            worksheet.getCell('A3').alignment = { horizontal: 'center' };
+
+            const headerRow = worksheet.getRow(5);
+            headerRow.values = ['No', 'NIS', 'Nama', 'Kelas', 'JK', 'Hadir', 'Terlambat', 'Total Hadir', 'Izin', 'Sakit', 'Alpa', '% Hadir'];
+            headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+            headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
+            headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+            headerRow.height = 35;
+
+            worksheet.columns = [
+                { width: 5 }, { width: 12 }, { width: 30 }, { width: 10 }, { width: 6 },
+                { width: 8 }, { width: 12 }, { width: 12 }, { width: 8 }, { width: 8 },
+                { width: 8 }, { width: 10 }
+            ];
+
+            muridFormatted.forEach((m, index) => {
+                const row = worksheet.addRow([
+                    m.no, m.nis, m.nama, m.kelas, m.jenis_kelamin,
+                    m.hadir_ontime, m.terlambat, m.hadir_total,
+                    m.izin, m.sakit, m.alpa,
+                    `${m.persen_hadir}%`
+                ]);
+                if (index % 2 === 0) row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+            });
+        }
 
         worksheet.eachRow((row, rowNumber) => {
             if (rowNumber >= 5) {

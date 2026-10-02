@@ -84,20 +84,19 @@ exports.getLeaderboard = async (req, res) => {
         const { start, end, label, semester: semesterFinal } = getRangeTanggal(mode, bulanFinal, tahunFinal, semester);
 
         // ============================================
-        // QUERY BERDASARKAN MODE
+        // QUERY BERDASARKAN MODE (Ditambah poin dasar 100)
         // ============================================
         let query = '';
         let params = [];
 
         if (mode === 'harian' || mode === 'mingguan' || mode === 'bulanan' || mode === 'semester' || mode === 'tahunan') {
-            // Semua mode pakai log_poin dengan filter tanggal
             query = `
                 SELECT 
                     m.id,
                     u.nama_lengkap,
                     u.foto_profil,
                     k.nama_kelas,
-                    COALESCE(SUM(lp.poin_perubahan), 0) AS poin_total,
+                    (100 + COALESCE(SUM(lp.poin_perubahan), 0)) AS poin_total,
                     (SELECT COUNT(*) FROM perilaku p WHERE p.murid_id = m.id AND p.jenis = 'positif') as total_positif,
                     (SELECT COUNT(*) FROM perilaku p WHERE p.murid_id = m.id AND p.jenis = 'negatif') as total_negatif
                 FROM murid m
@@ -184,7 +183,7 @@ exports.getTop3 = async (req, res) => {
                 u.nama_lengkap,
                 u.foto_profil,
                 k.nama_kelas,
-                COALESCE(SUM(lp.poin_perubahan), 0) AS poin_total
+                (100 + COALESCE(SUM(lp.poin_perubahan), 0)) AS poin_total
             FROM murid m
             JOIN users u ON m.user_id = u.id
             JOIN kelas k ON m.kelas_id = k.id
@@ -273,9 +272,9 @@ exports.getLeaderboardKelas = async (req, res) => {
                 k.id,
                 k.nama_kelas,
                 k.tingkat,
-                AVG(COALESCE(poin.total, 0)) as rata_rata_poin,
+                AVG(100 + COALESCE(poin.total, 0)) as rata_rata_poin,
                 COUNT(DISTINCT m.id) as jumlah_murid,
-                SUM(COALESCE(poin.total, 0)) as total_poin
+                SUM(100 + COALESCE(poin.total, 0)) as total_poin
             FROM kelas k
             LEFT JOIN murid m ON k.id = m.kelas_id
             LEFT JOIN (

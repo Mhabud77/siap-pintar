@@ -1,4 +1,3 @@
-// src/routes/perilakuRoutes.js
 const express = require('express');
 const router = express.Router();
 const perilakuController = require('../controllers/perilakuController');
